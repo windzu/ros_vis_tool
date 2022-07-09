@@ -1,0 +1,5 @@
+camera_frame_id_list:
+  - CAM_FRONT
+  - CAM_FRONT_RIGHT
+lidar_frame_id_list:
+  - LIDAR_TOP
