@@ -45,6 +45,8 @@ def main():
         for key, value in camera_info_dict.items():
             camera_info_publisher_dict[key + "/camera_info"].publish(value)
 
+        print("publishing...")
+
         rate.sleep()
 
 
