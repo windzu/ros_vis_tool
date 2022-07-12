@@ -18,6 +18,17 @@ from foxglove_msgs.msg import ImageMarkerArray
 # pypcd
 from pypcd import pypcd
 
+color_dict = {
+    "red": ColorRGBA(1.0, 0.0, 0.0, 0.8),
+    "green": ColorRGBA(0.0, 1.0, 0.0, 0.8),
+    "blue": ColorRGBA(0.0, 0.0, 1.0, 0.8),
+    "yellow": ColorRGBA(1.0, 1.0, 0.0, 0.8),
+    "cyan": ColorRGBA(0.0, 1.0, 1.0, 0.8),
+    "magenta": ColorRGBA(1.0, 0.0, 1.0, 0.8),
+    "white": ColorRGBA(1.0, 1.0, 1.0, 0.8),
+    "black": ColorRGBA(0.0, 0.0, 0.0, 0.8),
+}
+
 
 class ROSVisualizer:
     def __init__(
@@ -44,8 +55,7 @@ class ROSVisualizer:
         # self._autoware_msgs_subscriber_dict_init()
         # self.test_marker_array_publisher = rospy.Publisher("test_marker_array", MarkerArray, queue_size=1)
 
-        # color init
-
+        # color dict
         self.color_dict = {
             "red": ColorRGBA(1.0, 0.0, 0.0, 0.8),
             "green": ColorRGBA(0.0, 1.0, 0.0, 0.8),
@@ -73,11 +83,11 @@ class ROSVisualizer:
         # image_marker_from_lidar
         self.image_marker_from_lidar_publisher_dict = self.__init_all_image_marker_from_lidar_publisher()
         # image_marker_array_from_detected_objects
-        self.image_marker_from_lidar_publisher_dict = (
+        self.image_marker_array_from_detected_objects_publisher_dict = (
             self.__init_all_image_marker_array_from_detected_objects_publisher()
         )
         # marker_array from detected_objects
-        self.marker_array_from_detected_objects_publisher = (
+        self.marker_array_from_detected_objects_publisher_dict = (
             self.__init_all_marker_array_from_detected_objects_publisher()
         )
 
@@ -182,16 +192,19 @@ class ROSVisualizer:
                 tf_stamped=tf_stamped, camera_info=camera_info, pointcloud2=pointcloud2
             )
             end_time = time.time()
-            print("convert 3dpoints to pixel: ", end_time - start_time)
+            print("pointcloud to pixel cost time : ", end_time - start_time)
             self.image_marker_from_lidar_publisher_dict[camera_frame_id].publish(image_marker_from_lidar)
 
     def __camera_callback(self, image_msg):
         camera_frame_id = image_msg.header.frame_id
         self.camera_msg_dict[camera_frame_id] = image_msg
 
-    def __detected_objects_callback(self, detected_objects_msg):
-        detected_objects_frame_id = detected_objects_msg.header.frame_id
-        self.detected_objects_msg_dict[detected_objects_frame_id] = detected_objects_msg
+    def __detected_objects_callback(self, detected_object_array):
+        if not detected_object_array.objects:
+            return
+
+        detected_objects_frame_id = detected_object_array.objects[0].header.frame_id
+        self.detected_objects_msg_dict[detected_objects_frame_id] = detected_object_array
 
         # 接收到的检测结果，转换为在图像上的投影marker和在lidar上的投影marker，并发布出去
         # - 如果是3d检测结果，则发布在图像上的投影marker和在lidar上的投影marker
@@ -201,9 +214,9 @@ class ROSVisualizer:
         detected_objects_type = "3d"
         if detected_objects_type == "3d":
             # lidar
-            lidar_frame_id = detected_objects_msg.header.frame_id
+            lidar_frame_id = detected_object_array.objects[0].header.frame_id
             marker_array_from_detected_objects = ROSVisualizer.autoware_detected_object_array_to_marker(
-                detected_objects_msg
+                detected_object_array
             )
             self.marker_array_from_detected_objects_publisher_dict[lidar_frame_id].publish(
                 marker_array_from_detected_objects
@@ -216,7 +229,7 @@ class ROSVisualizer:
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
             # all lidar to camera
-            # all
+            # pass
             rate.sleep()
 
     def get_tf_info(self, parent_frame_id, child_frame_id):
@@ -226,13 +239,13 @@ class ROSVisualizer:
         return self.static_tf_info_hub.get_camera_info(camera_frame_id)
 
     @staticmethod
-    def autoware_detected_object_array_to_marker(autoware_msg):
-        if autoware_msg is None or not isinstance(autoware_msg, DetectedObjectArray):
+    def autoware_detected_object_array_to_marker(detected_object_array):
+        if detected_object_array is None or not isinstance(detected_object_array, DetectedObjectArray):
             return None
 
         marker_array = MarkerArray()
         id = 0
-        for object in autoware_msg.objects:
+        for object in detected_object_array.objects:
             bbox3d_marker = Marker()
             bbox3d_marker.header = object.header
             bbox3d_marker.header.stamp = rospy.Time.now()
@@ -243,9 +256,11 @@ class ROSVisualizer:
 
             bbox3d_marker.pose = object.pose
             bbox3d_marker.scale = object.dimensions
-            bbox3d_marker.color = ROSVisualizer.bbox_color_map(object.label)  # need to change
+            bbox3d_marker.color = ROSVisualizer.bbox_color_map(
+                bbox_type="detected", bbox_class=object.label
+            )  # need to change
 
-            bbox3d_marker.lifetime = rospy.Duration(1)
+            bbox3d_marker.lifetime = rospy.Duration(0.1)
             marker_array.markers.append(bbox3d_marker)
 
             id += 1
@@ -358,26 +373,22 @@ class ROSVisualizer:
 
         """
         if bbox_type == "detected":
-            if bbox_class == "car":
-                color = ROSVisualizer.color_dict["blue"]
-            elif bbox_class == "pedestrian":
-                color = ROSVisualizer.color_dict["red"]
-            elif bbox_class == "cyclist":
-                color = ROSVisualizer.color_dict["green"]
-            elif bbox_class == "truck":
-                color = ROSVisualizer.color_dict["yellow"]
-            elif bbox_class == "bus":
-                color = ROSVisualizer.color_dict["purple"]
-            elif bbox_class == "motor":
-                color = ROSVisualizer.color_dict["orange"]
+            if bbox_class in ["car"]:
+                color = color_dict["blue"]
+            elif bbox_class in ["pedestrian", "person"]:
+                color = color_dict["red"]
+            elif bbox_class in ["bike", "cyclist", "motorcycle", "motor"]:
+                color = color_dict["green"]
+            elif bbox_class in ["truck", "bus"]:
+                color = color_dict["purple"]
             elif bbox_class == "other":
-                color = ROSVisualizer.color_dict["black"]
+                color = color_dict["orange"]
             else:
-                color = ROSVisualizer.color_dict["white"]
+                color = color_dict["white"]
         elif bbox_type == "predicted":
-            color = ROSVisualizer.color_dict["white"]
+            color = color_dict["white"]
         else:
-            color = ROSVisualizer.color_dict["white"]
+            color = color_dict["white"]
         return color
 
     @staticmethod

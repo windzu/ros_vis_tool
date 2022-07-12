@@ -34,11 +34,12 @@ class StaticTFInfoHub:
             raise Exception("camera_frame_id is not in camera_info_dict")
 
     def get_tf_info(self, parent_frame_id, child_frame_id):
-        rate = rospy.Rate(10.0)
         try:
+            start_time = time.time()
             trans = self._tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            end_time = time.time()
+            print("listern tf info cost time : ", end_time - start_time)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            rate.sleep()
             raise Exception("get_tf_info error")
         return trans
 
@@ -56,10 +57,3 @@ class StaticTFInfoHub:
                     pass
             else:
                 raise Exception("camera_frame_id is not in camera_info_dict")
-
-
-#
-#     def __repr__(self) -> str:
-#         repr_str=" [ StaticTFInfoHub ] : \n" +
-#         "   lidar_frame_id_list : "
-#         pass
