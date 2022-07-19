@@ -1,11 +1,14 @@
 import yaml
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 # ros
 import rospy
+import tf2_ros
 import geometry_msgs.msg
 from sensor_msgs.msg import CameraInfo
 from tf import transformations as t
+from geometry_msgs.msg import Point
 
 
 class TFInfo:
@@ -148,3 +151,205 @@ def parse_frame_id_info(frame_id_info_path):
     frame_id_info_dict = all_raw_config
 
     return frame_id_info_dict
+
+
+def store_all_tf_info(frame_id_info_dict):
+    lidar_frame_id_list = frame_id_info_dict["lidar_frame_id_list"]
+    camera_frame_id_list = frame_id_info_dict["camera_frame_id_list"]
+    radar_frame_id_list = frame_id_info_dict["radar_frame_id_list"]
+
+    tf_info_dict = {}
+    tf_buffer = tf2_ros.Buffer()
+    tf_listener = tf2_ros.TransformListener(tf_buffer)
+
+    # lidar to camera
+    for parent_frame_id in lidar_frame_id_list:
+        temp_dict = {}
+        for child_frame_id in camera_frame_id_list:
+            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            temp_dict[child_frame_id] = tf_stamped
+        tf_info_dict[parent_frame_id] = temp_dict
+
+    # lidar to radar
+    for parent_frame_id in lidar_frame_id_list:
+        temp_dict = {}
+        for child_frame_id in radar_frame_id_list:
+            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            temp_dict[child_frame_id] = tf_stamped
+        tf_info_dict[parent_frame_id] = temp_dict
+
+    # camera to lidar
+    for parent_frame_id in camera_frame_id_list:
+        temp_dict = {}
+        for child_frame_id in lidar_frame_id_list:
+            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            temp_dict[child_frame_id] = tf_stamped
+        tf_info_dict[parent_frame_id] = temp_dict
+    # camera to radar
+    for parent_frame_id in camera_frame_id_list:
+        temp_dict = {}
+        for child_frame_id in radar_frame_id_list:
+            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            temp_dict[child_frame_id] = tf_stamped
+        tf_info_dict[parent_frame_id] = temp_dict
+
+    # radar to lidar
+    for parent_frame_id in radar_frame_id_list:
+        temp_dict = {}
+        for child_frame_id in lidar_frame_id_list:
+            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            temp_dict[child_frame_id] = tf_stamped
+        tf_info_dict[parent_frame_id] = temp_dict
+    # radar to camera
+    for parent_frame_id in radar_frame_id_list:
+        temp_dict = {}
+        for child_frame_id in camera_frame_id_list:
+            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
+            temp_dict[child_frame_id] = tf_stamped
+        tf_info_dict[parent_frame_id] = temp_dict
+
+    return tf_info_dict
+
+
+def store_all_camera_info(camera_frame_id_list, camera_info_topic_suffix):
+    camera_info_dict = {}
+    for camera_frame_id in camera_frame_id_list:
+        # debug
+        print("[ store_all_camera_info ] : camera_frame_id: {}".format(camera_frame_id))
+        camera_info_topic = camera_frame_id + camera_info_topic_suffix
+        try:
+            camera_info_msg = rospy.wait_for_message(camera_info_topic, CameraInfo, timeout=3.0)
+            camera_info_dict[camera_frame_id] = camera_info_msg
+        except rospy.ROSException:
+            rospy.logwarn(
+                "[ store_all_camera_info ] : timeout when waiting for camera_info_topic: {}".format(camera_info_topic)
+            )
+            continue
+    return camera_info_dict
+
+
+def calculate_transform_from_lidar_to_pixle(tf_stamped, camera_info):
+    """calculate transform from lidar to pixel
+
+    Args:
+        tf_stamped (_type_): ros tf2_msgs/TFStamped msg lidar to camera
+        camera_info (_type_): camera_info_msgs/CameraInfo msg camera info
+    Returns:
+        transform (np.array(3*4)): transform from lidar to pixel matrix
+    """
+    transform_matrix = np.eye(4)
+    # convert tf_stamped to matrix
+    r = R.from_quat(
+        (
+            tf_stamped.transform.rotation.x,
+            tf_stamped.transform.rotation.y,
+            tf_stamped.transform.rotation.z,
+            tf_stamped.transform.rotation.w,
+        )
+    )
+    transform_matrix[:3, :3] = r.as_matrix()
+    transform_matrix[:3, 3] = (
+        tf_stamped.transform.translation.x,
+        tf_stamped.transform.translation.y,
+        tf_stamped.transform.translation.z,
+    )
+
+    camera_info.P = np.array(camera_info.P).astype(np.float32)
+    camera_projection_matrix = camera_info.P.reshape(3, 4)
+    transform_matrix = np.dot(camera_projection_matrix, transform_matrix)
+    return transform_matrix
+
+
+def calculate_3d_bbox_corners(h, w, l, x, y, z, yaw):
+    """将3d的bbox转换成8个corner 3d坐标 (右手坐标系,x朝前,y朝左,z朝上)
+
+    Args:
+        h (_type_): 3d bbox height (z-axis)
+        w (_type_): 3d bbox width (y-axis)
+        l (_type_): 3d bbox length (x-axis)
+        x (_type_): x position
+        y (_type_): y position
+        z (_type_): z position
+        yaw (_type_): rotation angle around the z-axis
+    """
+
+    # 1. get 8 3d points
+    # 点的顺序为,以z=0将3d bbox分为上下两个部分 从顶部俯视角度看 以左上角为第一个点 按照顺时针顺序排列
+    x_corners = [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2]
+    y_corners = [h / 2, -h / 2, -h / 2, h / 2, h / 2, -h / 2, -h / 2, h / 2]
+    z_corners = [w / 2, w / 2, w / 2, w / 2, -w / 2, -w / 2, -w / 2, -w / 2]
+    # convert x_corners y_corners z_corners to 3x8 matrix
+    corners_3d = np.array([x_corners, y_corners, z_corners])
+    # roatate 4x8 matrix around z-axis by yaw angle
+    r = R.from_euler("z", yaw)
+    rotation_matrix = r.as_matrix()
+    corners_3d = np.dot(rotation_matrix, corners_3d)
+    # add x y z
+    corners_3d = np.add(corners_3d, np.array([[x], [y], [z]]))
+    # # expand 3x8 to 4x8 with 1s in the 4th column
+    # corners_3d = np.concatenate((corners_3d, np.ones((1, 8))), axis=0)
+
+    return corners_3d
+
+
+def get_lines_from_8_points(points):
+    """通过8个点获取n条线段
+
+    Args:
+        points (np.array(3*8)): 3d点投影到图像上的点的坐标
+    """
+    point_list = []
+    # 0-3 line ”上平面“
+    for i in range(4):
+        start_point = Point()
+        end_point = Point()
+        if i == 3:
+            start_point.x = points[0, i]
+            start_point.y = points[1, i]
+            start_point.z = points[2, i]
+            end_point.x = points[0, 0]
+            end_point.y = points[1, 0]
+            end_point.z = points[2, 0]
+        else:
+            start_point.x = points[0, i]
+            start_point.y = points[1, i]
+            start_point.z = points[2, i]
+            end_point.x = points[0, i + 1]
+            end_point.y = points[1, i + 1]
+            end_point.z = points[2, i + 1]
+        point_list.append(start_point)
+        point_list.append(end_point)
+    # 4-7 line ”下平面“
+    for i in range(4):
+        start_point = Point()
+        end_point = Point()
+        i = i + 4
+        if i == 7:
+            start_point.x = points[0, i]
+            start_point.y = points[1, i]
+            start_point.z = points[2, i]
+            end_point.x = points[0, 0]
+            end_point.y = points[1, 0]
+            end_point.z = points[2, 0]
+        else:
+            start_point.x = points[0, i]
+            start_point.y = points[1, i]
+            start_point.z = points[2, i]
+            end_point.x = points[0, i + 1]
+            end_point.y = points[1, i + 1]
+            end_point.z = points[2, i + 1]
+        point_list.append(start_point)
+        point_list.append(end_point)
+    # 8-11 line ”侧面“
+    for i in range(4):
+        start_point = Point()
+        end_point = Point()
+        start_point.x = points[0, i]
+        start_point.y = points[1, i]
+        start_point.z = points[2, i]
+        end_point.x = points[0, i + 4]
+        end_point.y = points[1, i + 4]
+        end_point.z = points[2, i + 4]
+        point_list.append(start_point)
+        point_list.append(end_point)
+    return point_list

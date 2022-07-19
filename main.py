@@ -8,7 +8,7 @@ import tf2_ros
 from sensor_msgs.msg import PointCloud2, CameraInfo, Image, CompressedImage
 
 # local
-from utils import parse_camera_info, parse_static_tf_info, parse_frame_id_info
+from utils import parse_frame_id_info, store_all_camera_info, store_all_tf_info
 from static_tf_info_hub import StaticTFInfoHub
 from ros_visualizer import ROSVisualizer
 
@@ -19,28 +19,28 @@ def parse_args():
         "--frame_id_info_path", type=str, default="./config/frame_id_info.yaml", help="path to frame_id_info.yaml"
     )
 
+    # if publish image_marker_from_lidar flag
+    # lidar转pixel比较消耗性能，而且对延迟要求高，所以一般只在车辆静止时启用，用于校验lidar与camera的联合标定精度
+    # TODO : 此参数当前的命名不太明确，后面再改
+    parser.add_argument(
+        "--if_publish_image_marker_from_lidar",
+        type=bool,
+        default=False,
+        help="if publish image_marker_from_lidar",
+    )
+
+    # 默认情况下topic均由frame_id按照约定的规则生成，如果topic按照是按照约定的规则设置的，则下面的参数不需要设置
     # topic info (for generate topic )
+    parser.add_argument("--lidar_topic_suffix", type=str, default="", help="lidar topic suffix")
+    parser.add_argument("--camera_topic_suffix", type=str, default="/image_rect_compressed", help="camera topic suffix")
+    parser.add_argument("--radar_topic_suffix", type=str, default="", help="radar topic suffix")
     parser.add_argument(
         "--camera_info_topic_suffix", type=str, default="/camera_info", help="used to generate camera info topic"
     )
-    parser.add_argument(
-        "--camera_topic_suffix", type=str, default="/image_rect_compressed", help="used to generate camera topic"
-    )
-    parser.add_argument("--lidar_topic_suffix", type=str, default="", help="used to generate lidar topic")
 
-    # suffix
+    parser.add_argument("--republish_topic_suffix", type=str, default="/republish", help="msg republish topic suffix")
     args = parser.parse_args()
     return args
-
-
-# def lidar_to_camera_callback():
-#     # get tf from static_tf
-#     static_tf_subscriber_dict = {}
-#     for static_tf_frame_id in frame_id_info_dict["static_tf_frame_id_list"]:
-#         static_tf_topic = static_tf_frame_id + args.static_tf_topic_suffix
-#         static_tf_subscriber_dict[static_tf_topic] = rospy.Subscriber(static_tf_topic, TransformStamped, callback=None)
-#
-#     pass
 
 
 def main():
@@ -48,104 +48,39 @@ def main():
 
     rospy.init_node("ros_vis_tool")
 
-    # topic info (for generate tf)
+    # parse frame id info ,default have three kinds sensor (for generate tf)
+    # - camera
+    # - lidar
+    # - radar
     frame_id_info_dict = parse_frame_id_info(args.frame_id_info_path)
-
     lidar_frame_id_list = frame_id_info_dict["lidar_frame_id_list"]
     camera_frame_id_list = frame_id_info_dict["camera_frame_id_list"]
+    radar_frame_id_list = frame_id_info_dict["radar_frame_id_list"]
 
-    # 初始化用于查询 tf 的类(将所有需要使用到的tf信息都保存下来)
-    static_tf_info_hub = StaticTFInfoHub(
-        lidar_frame_id_list=lidar_frame_id_list,
-        camera_frame_id_list=camera_frame_id_list,
-        camera_info_topic_suffix=args.camera_info_topic_suffix,
-    )
+    # static tf info does not need to be stored in StaticTFInfoHub
+
+    # 提前保存所有tf_info (使用双重dict进行存储,第一个key为parent_frame_id,第二个key为child_frame_id)
+    tf_info_dict = store_all_tf_info(frame_id_info_dict)
+    # 提前保存所有camera_info
+    camera_info_dict = store_all_camera_info(camera_frame_id_list, args.camera_info_topic_suffix)
+
+    # debug
+    print("camera_info_dict:", camera_info_dict)
 
     ros_visualizer = ROSVisualizer(
         lidar_frame_id_list=lidar_frame_id_list,
         lidar_topic_suffix=args.lidar_topic_suffix,
         camera_frame_id_list=camera_frame_id_list,
         camera_topic_suffix=args.camera_topic_suffix,
-        static_tf_info_hub=static_tf_info_hub,
+        radar_frame_id_list=radar_frame_id_list,
+        radar_topic_suffix=args.radar_topic_suffix,
+        tf_info_dict=tf_info_dict,
+        camera_info_dict=camera_info_dict,
+        if_publish_image_marker_from_lidar=args.if_publish_image_marker_from_lidar,  # 命名后面再改
     )
 
     # test
     ros_visualizer.start()
-    # 接下来创建一个ros的可视化类
-    # - 3d 点云 -> 2d 像素点
-    # - 3d bbox -> 2d bbox
-
-    # # test
-    # camera_info = static_tf_info_hub.get_camera_info("CAM_FRONT")
-    # print("test camera_info: ", camera_info)
-    # trans = static_tf_info_hub.get_tf_info(parent_frame_id="LIDAR_TOP", child_frame_id="CAM_FRONT")
-    # print("test tf_info: ", trans)
-    # trans = static_tf_info_hub.get_tf_info(parent_frame_id="CAM_FRONT", child_frame_id="LIDAR_TOP")
-    # print("test tf_info: ", trans)
-
-    # 根据配置文件中的frame_id信息订阅所有与之相关的topic，包括
-    # - camera_info : CameraInfo
-    # - camera : Image or CompressedImage
-    # - lidar : PointCloud2
-    # - static_tf : TransformStamped (static_tf)
-
-    # 首先获取到所有lidar到camera的tf信息，然后将其静态的存储起来，用于构建可视化类的初始化参数
-    # - 所有lidar到所有camera的tf信息 ： 订阅lidar到camera的tf
-    # - 所有camera的camera_info信息 ： 订阅camera的camera_info
-    # - 所有camera到所有lidar的tf信息 ： 订阅camera到lidar的tf
-
-    # # subscribe all camera_info topic
-    # camera_info_subscriber_dict = {}
-    # sync_camera_subscriber_dict = {}
-    # for camera_frame_id in frame_id_info_dict["camera_frame_id_list"]:
-    #     camera_info_topic = camera_frame_id + args.camera_info_topic_suffix
-    #     camera_info_subscriber_dict[camera_info_topic] = rospy.Subscriber(camera_info_topic, CameraInfo, callback=None)
-
-    # # subscribe all lidar topic
-    # lidar_subscriber_dict = {}
-    # sync_lidar_subscriber_dict = {}
-    # for lidar_frame_id in frame_id_info_dict["lidar_frame_id_list"]:
-    #     lidar_topic = lidar_frame_id + args.lidar_topic_suffix  # NOTE : lidar topic euqal to lidar frame id
-    #     lidar_subscriber_dict[lidar_topic] = rospy.Subscriber(lidar_topic, PointCloud2, callback=None)
-    #     sync_lidar_subscriber_dict[lidar_topic] = message_filters.Subscriber(lidar_topic, PointCloud2)
-
-    # # subscribe all static_tf topic between lidar and camera
-    # static_tf_subscriber_dict = {}
-    # for lidar_frame_id in frame_id_info_dict["lidar_frame_id_list"]:
-    #     lidar_topic = lidar_frame_id + args.lidar_topic_suffix
-    #     for camera_frame_id in frame_id_info_dict["camera_frame_id_list"]:
-    #         camera_topic = camera_frame_id + args.camera_topic_suffix
-    #     # static_tf_topic = static_tf_frame_id + args.static_tf_topic_suffix
-    # #   static_tf_subscriber_dict[static_tf_topic] = rospy.Subscriber(static_tf_topic, TransformStamped, callback=None)
-
-    #     # 所有lidar到camera的投影
-    #     lidar_to_camera_publisher_dict = {}  # 暂时使用
-    #     for lidar_topic, sync_lidar_subscriber in sync_lidar_subscriber_dict.items():
-    #         if len(sync_camera_info_subscriber_dict) != len(sync_camera_subscriber_dict):
-    #             raise ValueError("camera_info_topic_suffix and camera_topic_suffix must be same length")
-    #         for camera_frame_id in frame_id_info_dict["camera_frame_id_list"]:
-    #             sync_camera_info_subscriber = sync_camera_info_subscriber_dict[
-    #                 camera_frame_id + args.camera_info_topic_suffix
-    #             ]
-    #             sync_camera_subscriber = sync_camera_subscriber_dict[camera_frame_id + args.camera_topic_suffix]
-    #
-    #     ts = message_filters.ApproximateTimeSynchronizer([image_sub, info_sub], 10, 0.2)
-
-    # subscribe all static_tf topic(目前只需要从lidar to camera的tf)
-    static_tf_subscriber_dict = {}
-
-
-#
-#     rate = rospy.Rate(10)
-#     while not rospy.is_shutdown():
-#
-#         # project lidar point to camera
-#         camera_frame_id_list = frame_id_info_dict["camera_frame_id_list"]
-#         lidar_frame_id_list = frame_id_info_dict["lidar_frame_id_list"]
-#
-#         #
-#
-#         rate.sleep()
 
 
 if __name__ == "__main__":

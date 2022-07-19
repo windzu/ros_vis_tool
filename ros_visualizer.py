@@ -1,14 +1,19 @@
+from copy import deepcopy
 from turtle import color, distance
 import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
+import copy
+
 
 # ros
 import rospy
+import tf2_ros
 from std_msgs.msg import ColorRGBA
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import CameraInfo, Image, CompressedImage
 from geometry_msgs.msg import Point
+
 
 # from visualization_msgs import ImageMarker
 from visualization_msgs.msg import ImageMarker, Marker, MarkerArray
@@ -18,15 +23,18 @@ from foxglove_msgs.msg import ImageMarkerArray
 # pypcd
 from pypcd import pypcd
 
+# local
+from utils import calculate_3d_bbox_corners, calculate_transform_from_lidar_to_pixle, get_lines_from_8_points
+
 color_dict = {
     "red": ColorRGBA(1.0, 0.0, 0.0, 0.8),
     "green": ColorRGBA(0.0, 1.0, 0.0, 0.8),
     "blue": ColorRGBA(0.0, 0.0, 1.0, 0.8),
     "yellow": ColorRGBA(1.0, 1.0, 0.0, 0.8),
-    "cyan": ColorRGBA(0.0, 1.0, 1.0, 0.8),
-    "magenta": ColorRGBA(1.0, 0.0, 1.0, 0.8),
     "white": ColorRGBA(1.0, 1.0, 1.0, 0.8),
     "black": ColorRGBA(0.0, 0.0, 0.0, 0.8),
+    "purple": ColorRGBA(1.0, 0.0, 1.0, 0.8),
+    "orange": ColorRGBA(1.0, 0.5, 0.0, 0.8),
 }
 
 
@@ -37,23 +45,31 @@ class ROSVisualizer:
         lidar_topic_suffix="",
         camera_frame_id_list=None,
         camera_topic_suffix="",
-        static_tf_info_hub=None,
+        radar_frame_id_list=None,
+        radar_topic_suffix="",
+        tf_info_dict=None,
+        camera_info_dict=None,
+        if_publish_image_marker_from_lidar=False,
     ):
         self.lidar_frame_id_list = lidar_frame_id_list
         self.lidar_topic_suffix = lidar_topic_suffix
         self.camera_frame_id_list = camera_frame_id_list
         self.camera_topic_suffix = camera_topic_suffix
-        self.static_tf_info_hub = static_tf_info_hub
+        self.radar_frame_id_list = radar_frame_id_list
+        self.radar_topic_suffix = radar_topic_suffix
+        self.tf_info_dict = tf_info_dict
+        self.camera_info_dict = camera_info_dict
+        self.if_publish_image_marker_from_lidar = if_publish_image_marker_from_lidar
+
+        # global variable
+        self.lidar_to_pixle_transform_matrix_dict = {}
 
         # 初始化所有订阅者
         self.init_all_subscriber()
         # 初始化所有发布者
         self.init_all_publisher()
-
-        # # autoware msgs test
-        # self.autoware_msgs = None
-        # self._autoware_msgs_subscriber_dict_init()
-        # self.test_marker_array_publisher = rospy.Publisher("test_marker_array", MarkerArray, queue_size=1)
+        # 初始化所有transform
+        self.init_all_transform()
 
         # color dict
         self.color_dict = {
@@ -74,6 +90,8 @@ class ROSVisualizer:
         # camera
         self.camera_subscriber_dict = self.__init_all_camera_subsciber()
         self.camera_msg_dict = {}
+        # radar
+        self.radar_subscriber_dict = self.__init_all_radar_subsciber()
         # detected_objects
         self.detected_objects_subscriber_dict = self.__init_all_detected_objects_subscriber()
         self.detected_objects_msg_dict = {}
@@ -86,10 +104,23 @@ class ROSVisualizer:
         self.image_marker_array_from_detected_objects_publisher_dict = (
             self.__init_all_image_marker_array_from_detected_objects_publisher()
         )
+
         # marker_array from detected_objects
         self.marker_array_from_detected_objects_publisher_dict = (
             self.__init_all_marker_array_from_detected_objects_publisher()
         )
+
+    def init_all_transform(self):
+        # 已经有了所有frame_id之间的变换信息，还缺少如下一些变换信息
+        # lidar -> camera pixel
+        for lidar_frame_id in self.lidar_frame_id_list:
+            temp_dict = {}
+            for camera_frame_id in self.camera_frame_id_list:
+                tf_stamped = self.tf_info_dict[lidar_frame_id][camera_frame_id]
+                camera_info = self.camera_info_dict[camera_frame_id]
+                transform_matrix = calculate_transform_from_lidar_to_pixle(tf_stamped, camera_info)
+                temp_dict[camera_frame_id] = transform_matrix
+            self.lidar_to_pixle_transform_matrix_dict[lidar_frame_id] = temp_dict
 
     def __init_all_lidar_subsciber(self):
         """init all lidar subscriber which lidar topic based on lidar_frame_id_list
@@ -97,6 +128,9 @@ class ROSVisualizer:
         Returns:
             dict: all lidar topics's subscriber
         """
+        if self.lidar_frame_id_list is None:
+            return {}
+
         lidar_subscriber_dict = {}
         for lidar_frame_id in self.lidar_frame_id_list:
             lidar_topic = lidar_frame_id + self.lidar_topic_suffix
@@ -109,6 +143,9 @@ class ROSVisualizer:
         Returns:
             dict: all camera topics's subscriber
         """
+        if self.camera_info_dict is None:
+            return {}
+
         camera_subscriber_dict = {}
         for camera_frame_id in self.camera_frame_id_list:
             camera_topic = camera_frame_id + self.camera_topic_suffix
@@ -116,6 +153,21 @@ class ROSVisualizer:
                 camera_topic, CompressedImage, self.__camera_callback
             )
         return camera_subscriber_dict
+
+    def __init_all_radar_subsciber(self):
+        """init all radar subscriber which radar topic based on radar_frame_id_list
+
+        Returns:
+            dict: all radar topics's subscriber
+        """
+        if self.radar_frame_id_list is None:
+            return {}
+
+        radar_subscriber_dict = {}
+        for radar_frame_id in self.radar_frame_id_list:
+            radar_topic = radar_frame_id + self.radar_topic_suffix
+            radar_subscriber_dict[radar_frame_id] = rospy.Subscriber(radar_topic, PointCloud2, self.__radar_callback)
+        return radar_subscriber_dict
 
     def __init_all_detected_objects_subscriber(self):
         """init all detected objects subscriber which detected objects topic based on lidar_frame_id_list and camera_frame_id_list
@@ -125,17 +177,26 @@ class ROSVisualizer:
         """
         detected_objects_subscriber_dict = {}
         # lidar
-        for lidar_frame_id in self.lidar_frame_id_list:
-            detected_objects_topic = lidar_frame_id + "/detected_objects"
-            detected_objects_subscriber_dict[lidar_frame_id] = rospy.Subscriber(
-                detected_objects_topic, DetectedObjectArray, self.__detected_objects_callback
-            )
+        if self.lidar_frame_id_list is not None:
+            for lidar_frame_id in self.lidar_frame_id_list:
+                detected_objects_topic = lidar_frame_id + "/detected_objects"
+                detected_objects_subscriber_dict[lidar_frame_id] = rospy.Subscriber(
+                    detected_objects_topic, DetectedObjectArray, self.__detected_objects_callback
+                )
         # camera
-        for camera_frame_id in self.camera_frame_id_list:
-            detected_objects_topic = camera_frame_id + "/detected_objects"
-            detected_objects_subscriber_dict[camera_frame_id] = rospy.Subscriber(
-                detected_objects_topic, DetectedObjectArray, self.__detected_objects_callback
-            )
+        if self.camera_info_dict is not None:
+            for camera_frame_id in self.camera_frame_id_list:
+                detected_objects_topic = camera_frame_id + "/detected_objects"
+                detected_objects_subscriber_dict[camera_frame_id] = rospy.Subscriber(
+                    detected_objects_topic, DetectedObjectArray, self.__detected_objects_callback
+                )
+        # radar
+        if self.radar_frame_id_list is not None:
+            for radar_frame_id in self.radar_frame_id_list:
+                detected_objects_topic = radar_frame_id + "/detected_objects"
+                detected_objects_subscriber_dict[radar_frame_id] = rospy.Subscriber(
+                    detected_objects_topic, DetectedObjectArray, self.__detected_objects_callback
+                )
         return detected_objects_subscriber_dict
 
     def __init_all_image_marker_from_lidar_publisher(self):
@@ -182,22 +243,49 @@ class ROSVisualizer:
         self.lidar_msg_dict[lidar_frame_id] = pointcloud2
 
         # 接收到的点云数据，转换为在图像上的投影marker，并发布出去
-        for camera_frame_id in self.camera_frame_id_list:
-            tf_stamped = self.get_tf_info(lidar_frame_id, camera_frame_id)
-            camera_info = self.get_camera_info(camera_frame_id)
+        if self.if_publish_image_marker_from_lidar:
+            for camera_frame_id in self.camera_frame_id_list:
+                lidar_to_pixle_transform_matrix = self.lidar_to_pixle_transform_matrix_dict[lidar_frame_id][
+                    camera_frame_id
+                ]
+                camera_info = self.camera_info_dict[camera_frame_id]
 
-            # timing
-            start_time = time.time()
-            image_marker_from_lidar = ROSVisualizer.pointcloud_to_pixel(
-                tf_stamped=tf_stamped, camera_info=camera_info, pointcloud2=pointcloud2
-            )
-            end_time = time.time()
-            print("pointcloud to pixel cost time : ", end_time - start_time)
-            self.image_marker_from_lidar_publisher_dict[camera_frame_id].publish(image_marker_from_lidar)
+                # timing
+                start_time = time.time()
+                image_marker_from_lidar = ROSVisualizer.pointcloud_to_pixel(
+                    lidar_to_pixle_transform_matrix=lidar_to_pixle_transform_matrix,
+                    camera_info=camera_info,
+                    pointcloud2=pointcloud2,
+                )
+                end_time = time.time()
+                print("pointcloud to pixel cost time : ", end_time - start_time)
+                self.image_marker_from_lidar_publisher_dict[camera_frame_id].publish(image_marker_from_lidar)
 
     def __camera_callback(self, image_msg):
         camera_frame_id = image_msg.header.frame_id
         self.camera_msg_dict[camera_frame_id] = image_msg
+
+    def __radar_callback(self, pointcloud2):
+        radar_frame_id = pointcloud2.header.frame_id
+        self.radar_msg_dict[radar_frame_id] = pointcloud2
+
+        # 接收到的点云数据，转换为在图像上的投影marker，并发布出去
+        if self.if_publish_image_marker_from_radar:
+            for camera_frame_id in self.camera_frame_id_list:
+                lidar_to_pixle_transform_matrix = self.lidar_to_pixle_transform_matrix_dict[radar_frame_id][
+                    camera_frame_id
+                ]
+                camera_info = self.camera_info_dict[camera_frame_id]
+                # timing
+                start_time = time.time()
+                image_marker_from_radar = ROSVisualizer.pointcloud_to_pixel(
+                    lidar_to_pixle_transform_matrix=lidar_to_pixle_transform_matrix,
+                    camera_info=camera_info,
+                    pointcloud2=pointcloud2,
+                )
+                end_time = time.time()
+                print("pointcloud to pixel cost time : ", end_time - start_time)
+                self.image_marker_from_radar_publisher_dict[camera_frame_id].publish(image_marker_from_radar)
 
     def __detected_objects_callback(self, detected_object_array):
         if not detected_object_array.objects:
@@ -213,15 +301,22 @@ class ROSVisualizer:
         # test
         detected_objects_type = "3d"
         if detected_objects_type == "3d":
-            # lidar
+            # convert detected objects to marker array
             lidar_frame_id = detected_object_array.objects[0].header.frame_id
-            marker_array_from_detected_objects = ROSVisualizer.autoware_detected_object_array_to_marker(
+            marker_array_from_detected_objects = ROSVisualizer.autoware_detected_object_array_to_marker_array(
                 detected_object_array
             )
             self.marker_array_from_detected_objects_publisher_dict[lidar_frame_id].publish(
                 marker_array_from_detected_objects
             )
-            # camera
+            # convert detected objects to image marker array
+            # NOTE : will get a image_marker_array dict, and the key is the camera_frame_id
+            image_marker_array_from_detected_objects_dict = (
+                ROSVisualizer.autoware_detected_object_array_to_image_marker_array(
+                    detected_object_array=detected_object_array,
+                    lidar_to_pixle_transform_matrix_dict=self.lidar_to_pixle_transform_matrix_dict,
+                )
+            )
             # NOTE : waiting to be implemented
 
     def start(self):
@@ -230,16 +325,12 @@ class ROSVisualizer:
         while not rospy.is_shutdown():
             # all lidar to camera
             # pass
+            # ros log info
+            rospy.loginfo("ros_visualizer is running")
             rate.sleep()
 
-    def get_tf_info(self, parent_frame_id, child_frame_id):
-        return self.static_tf_info_hub.get_tf_info(parent_frame_id=parent_frame_id, child_frame_id=child_frame_id)
-
-    def get_camera_info(self, camera_frame_id):
-        return self.static_tf_info_hub.get_camera_info(camera_frame_id)
-
     @staticmethod
-    def autoware_detected_object_array_to_marker(detected_object_array):
+    def autoware_detected_object_array_to_marker_array(detected_object_array):
         if detected_object_array is None or not isinstance(detected_object_array, DetectedObjectArray):
             return None
 
@@ -267,7 +358,78 @@ class ROSVisualizer:
         return marker_array
 
     @staticmethod
-    def pointcloud_to_pixel(tf_stamped, camera_info, pointcloud2):
+    def autoware_detected_object_array_to_image_marker_array(
+        detected_object_array, lidar_to_pixle_transform_matrix_dict
+    ):
+        """将3d检测结果转换为在图像上的投影marker
+        NOTE : 一个3d检测结果可能会出现在多个相机上,所以返回的是一个字典,key是相机的frame_id
+
+        Args:
+            detected_object_array (_type_): _description_
+            lidar_to_pixle_transform_matrix_dict (_type_): each lidar to each camera's pixel transform matrix
+
+        Returns:
+            dict: image_marker_array dict , the key is the camera_frame_id
+        """
+        if detected_object_array is None or not isinstance(detected_object_array, DetectedObjectArray):
+            return {}
+
+        image_marker_array_dict = {}
+        # first get the all transform from lidar to camera pixel
+        current_lidar_frame_id = detected_object_array.objects[0].header.frame_id
+        current_lidar_to_pixle_transform_matrix_dict = lidar_to_pixle_transform_matrix_dict[current_lidar_frame_id]
+
+        # NOTE : foxglove ImageMarkerArray just need one image_marker
+        image_marker_array = ImageMarkerArray()
+        image_marker = ImageMarker()
+        image_marker.id = 0
+        image_marker.ns = "autoware_detected_object"
+        image_marker.header = detected_object_array.objects[0].header
+        image_marker.header.stamp = rospy.Time.now()
+        image_marker.type = ImageMarker.LINE_LIST
+        image_marker.action = ImageMarker.ADD
+
+        for key, value in current_lidar_to_pixle_transform_matrix_dict.items():
+            camera_frame_id = key
+            image_marker_array_dict[camera_frame_id] = copy.deepcopy(image_marker)
+
+        for object in detected_object_array.objects:
+            # get h, w, l, x, y, z, yaw, trans by parsing object
+            h = object.dimensions.z
+            w = object.dimensions.y
+            l = object.dimensions.x
+            x = object.pose.position.x
+            y = object.pose.position.y
+            z = object.pose.position.z
+            # get yaw
+            r = R.from_quat(
+                [
+                    object.pose.orientation.x,
+                    object.pose.orientation.y,
+                    object.pose.orientation.z,
+                    object.pose.orientation.w,
+                ]
+            )
+            yaw = r.as_euler("xyz")[2]
+            corners_3d = calculate_3d_bbox_corners(h, w, l, x, y, z, yaw)
+            # expand 3x8 to 4x8 with 1s in the 4th column
+            corners_3d = np.concatenate((corners_3d, np.ones((1, 8))), axis=0)
+
+            # lidar to each camera pixel transform
+            for key, value in current_lidar_to_pixle_transform_matrix_dict.items():
+                camera_frame_id = key
+                lidar_to_pixel_transform_matrix = value
+                points = np.dot(lidar_to_pixel_transform_matrix, corners_3d)
+                # post process
+                points = (points / points[2, :]).astype(np.float32)
+
+                point_list = get_lines_from_8_points(points)
+                image_marker_array_dict[camera_frame_id].points.extend(point_list)
+
+            image_marker.color = ROSVisualizer.bbox_color_map(bbox_type="detected", bbox_class=object.label)
+
+    @staticmethod
+    def pointcloud_to_pixel(lidar_to_pixle_transform_matrix, camera_info, pointcloud2):
         """convert pointcloud2 to image marker
         args:
             tf_stamped: ros tf_stamped msg
@@ -291,31 +453,7 @@ class ROSVisualizer:
         points[2, :] = z
         points[3, :] = 1.0
 
-        # transform points to camera frame
-        transform_matrix = np.eye(4)
-        # convert tf_stamped to matrix
-        r = R.from_quat(
-            (
-                tf_stamped.transform.rotation.x,
-                tf_stamped.transform.rotation.y,
-                tf_stamped.transform.rotation.z,
-                tf_stamped.transform.rotation.w,
-            )
-        )
-        transform_matrix[:3, :3] = r.as_matrix()
-        transform_matrix[:3, 3] = (
-            tf_stamped.transform.translation.x,
-            tf_stamped.transform.translation.y,
-            tf_stamped.transform.translation.z,
-        )
-
-        # transform points
-        points = np.dot(transform_matrix, points)
-        # convert points to pixel
-        # convert camera_info.P from float64 tuple to numpy array
-        camera_info.P = np.array(camera_info.P).astype(np.float32)
-        camera_projection_matrix = camera_info.P.reshape(3, 4)
-        points = np.dot(camera_projection_matrix, points)
+        points = np.dot(lidar_to_pixle_transform_matrix, points)
 
         # find points in front of camera
         # find points[2, :]<0 index for mask
@@ -372,17 +510,24 @@ class ROSVisualizer:
             color: color
 
         """
+        # NOTE : 以下将常见的类别作为颜色映射
+        # (紫色)包含人 ： 人 行人 自行车 摩托车
+        # (黄色)小汽车 ： 汽车
+        # (橙色)大汽车 ： 卡车 公交车 拖车 建筑车
+        # (红色)静态障碍物 ： 锥形桶 栅栏
+
+        bbox_class = bbox_class.lower()
         if bbox_type == "detected":
-            if bbox_class in ["car"]:
-                color = color_dict["blue"]
-            elif bbox_class in ["pedestrian", "person"]:
-                color = color_dict["red"]
-            elif bbox_class in ["bike", "cyclist", "motorcycle", "motor"]:
-                color = color_dict["green"]
-            elif bbox_class in ["truck", "bus"]:
+            if bbox_class in ["pedestrian", "person", "bicycle", "motorcycle", "cyclist"]:
                 color = color_dict["purple"]
-            elif bbox_class == "other":
+            elif bbox_class in ["car"]:
+                color = color_dict["yellow"]
+            elif bbox_class in ["truck", "bus", "trailer", "construction_vehicle"]:
                 color = color_dict["orange"]
+            elif bbox_class in ["traffic_cone", "barrier"]:
+                color = color_dict["red"]
+            elif bbox_class == "other":
+                color = color_dict["blue"]
             else:
                 color = color_dict["white"]
         elif bbox_type == "predicted":

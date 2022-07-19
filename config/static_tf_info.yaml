@@ -1,4 +1,4 @@
-/base_link_to_LIDAR_TOP:
+base_link_to_LIDAR_TOP:
   rotation:
   - -0.006492242056004365
   - 0.010646214713995808
@@ -8,7 +8,7 @@
   - 0.943713
   - 0.0
   - 1.84023
-/base_link_to_CAM_FRONT:
+base_link_to_CAM_FRONT:
   rotation:
   - -0.5030316162024876
   - 0.4997798114386805
@@ -18,7 +18,7 @@
   - 1.70079118954
   - 0.0159456324149
   - 1.51095763913
-/base_link_to_CAM_FRONT_RIGHT:
+base_link_to_CAM_FRONT_RIGHT:
   rotation:
   - -0.2026940577919598
   - 0.6824507824531167

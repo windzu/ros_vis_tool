@@ -34,17 +34,25 @@ def main():
         for key in camera_info_dict.keys()
     }
 
-    # static tf info
-    static_transformStamped_list = parse_static_tf_info(args.static_tf_info_path)
-    static_tf2_broadcaster = tf2_ros.StaticTransformBroadcaster()
-    static_tf2_broadcaster.sendTransform(static_transformStamped_list)
+    # # static tf info
+    # static_transformStamped_list = parse_static_tf_info(args.static_tf_info_path)
+    # static_tf2_broadcaster = tf2_ros.StaticTransformBroadcaster()
+    # static_tf2_broadcaster.sendTransform(static_transformStamped_list)
+
+    # publish tf msg
+    tf_info_list = parse_static_tf_info(args.static_tf_info_path)
+    tf2_broadcaster = tf2_ros.TransformBroadcaster()
 
     rate = rospy.Rate(10)
     # publish all camera info
     while not rospy.is_shutdown():
+        # publish camera info
         for key, value in camera_info_dict.items():
             camera_info_publisher_dict[key + "/camera_info"].publish(value)
 
+        # publish tf info
+        for tf_info in tf_info_list:
+            tf2_broadcaster.sendTransform(tf_info)
         print("publishing...")
 
         rate.sleep()
