@@ -4,6 +4,7 @@ import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
 import copy
+import math
 
 
 # ros
@@ -317,7 +318,13 @@ class ROSVisualizer:
                     lidar_to_pixle_transform_matrix_dict=self.lidar_to_pixle_transform_matrix_dict,
                 )
             )
-            # NOTE : waiting to be implemented
+            for camera_frame_id in self.camera_frame_id_list:
+                image_marker_array_from_detected_objects_publisher_dict = (
+                    self.image_marker_array_from_detected_objects_publisher_dict[camera_frame_id]
+                )
+                image_marker_array_from_detected_objects_publisher_dict.publish(
+                    image_marker_array_from_detected_objects_dict[camera_frame_id]
+                )
 
     def start(self):
 
@@ -383,24 +390,30 @@ class ROSVisualizer:
         image_marker_array = ImageMarkerArray()
         image_marker = ImageMarker()
         image_marker.id = 0
-        image_marker.ns = "autoware_detected_object"
+        image_marker.ns = "annotations"  #  autoware_detected_object
         image_marker.header = detected_object_array.objects[0].header
         image_marker.header.stamp = rospy.Time.now()
         image_marker.type = ImageMarker.LINE_LIST
         image_marker.action = ImageMarker.ADD
+        image_marker.scale = 2
+        image_marker.points = []
+        image_marker.outline_colors = []
+        image_marker_array.markers.append(image_marker)
 
         for key, value in current_lidar_to_pixle_transform_matrix_dict.items():
             camera_frame_id = key
-            image_marker_array_dict[camera_frame_id] = copy.deepcopy(image_marker)
+            image_marker_array_dict[camera_frame_id] = copy.deepcopy(image_marker_array)
+            image_marker_array_dict[camera_frame_id].markers[0].header.frame_id = camera_frame_id
 
         for object in detected_object_array.objects:
             # get h, w, l, x, y, z, yaw, trans by parsing object
             h = object.dimensions.z
-            w = object.dimensions.y
-            l = object.dimensions.x
+            w = object.dimensions.x  # y
+            l = object.dimensions.y  # x
             x = object.pose.position.x
             y = object.pose.position.y
             z = object.pose.position.z
+
             # get yaw
             r = R.from_quat(
                 [
@@ -410,7 +423,17 @@ class ROSVisualizer:
                     object.pose.orientation.w,
                 ]
             )
-            yaw = r.as_euler("xyz")[2]
+            yaw = r.as_euler("XYZ")[2]
+
+            # debug
+            print("x, y, z : ", x, y, z)
+            print("h, w, l : ", h, w, l)
+            print("yaw : ", yaw)
+            # debug
+            # yaw equal yaw - pi/2
+
+            yaw = math.pi / 2 - yaw  # 0
+
             corners_3d = calculate_3d_bbox_corners(h, w, l, x, y, z, yaw)
             # expand 3x8 to 4x8 with 1s in the 4th column
             corners_3d = np.concatenate((corners_3d, np.ones((1, 8))), axis=0)
@@ -424,9 +447,17 @@ class ROSVisualizer:
                 points = (points / points[2, :]).astype(np.float32)
 
                 point_list = get_lines_from_8_points(points)
-                image_marker_array_dict[camera_frame_id].points.extend(point_list)
+                image_marker_array_dict[camera_frame_id].markers[0].points.extend(point_list)
+                # TODO : add color
+                # get 8 points' color
 
-            image_marker.color = ROSVisualizer.bbox_color_map(bbox_type="detected", bbox_class=object.label)
+                red_color = color_dict["red"]
+                color_list = []
+                for i in range(12):
+                    color_list.append(red_color)
+                image_marker_array_dict[camera_frame_id].markers[0].outline_colors.extend(color_list)
+
+        return image_marker_array_dict
 
     @staticmethod
     def pointcloud_to_pixel(lidar_to_pixle_transform_matrix, camera_info, pointcloud2):
@@ -496,7 +527,6 @@ class ROSVisualizer:
 
             color = ROSVisualizer.distance_color_map(cur_depth=distance[i])
             image_marker.outline_colors.append(color)
-        # image_marker.points = [temp_points.x=point[0], point[1], 0) for point in points.T]
 
         return image_marker
 

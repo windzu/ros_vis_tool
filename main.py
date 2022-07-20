@@ -4,6 +4,7 @@ import argparse
 
 # ros
 import rospy
+import tf
 import tf2_ros
 from sensor_msgs.msg import PointCloud2, CameraInfo, Image, CompressedImage
 
@@ -56,8 +57,6 @@ def main():
     lidar_frame_id_list = frame_id_info_dict["lidar_frame_id_list"]
     camera_frame_id_list = frame_id_info_dict["camera_frame_id_list"]
     radar_frame_id_list = frame_id_info_dict["radar_frame_id_list"]
-
-    # static tf info does not need to be stored in StaticTFInfoHub
 
     # 提前保存所有tf_info (使用双重dict进行存储,第一个key为parent_frame_id,第二个key为child_frame_id)
     tf_info_dict = store_all_tf_info(frame_id_info_dict)

@@ -150,6 +150,10 @@ def parse_frame_id_info(frame_id_info_path):
 
     frame_id_info_dict = all_raw_config
 
+    for key, value in frame_id_info_dict.items():
+        if frame_id_info_dict[key] is None:
+            frame_id_info_dict[key] = []
+
     return frame_id_info_dict
 
 
@@ -164,49 +168,64 @@ def store_all_tf_info(frame_id_info_dict):
 
     # lidar to camera
     for parent_frame_id in lidar_frame_id_list:
-        temp_dict = {}
+        if parent_frame_id not in tf_info_dict.keys():
+            tf_info_dict[parent_frame_id] = {}
+
         for child_frame_id in camera_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
-            temp_dict[child_frame_id] = tf_stamped
-        tf_info_dict[parent_frame_id] = temp_dict
+            tf_stamped = tf_buffer.lookup_transform(
+                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+            )
+            tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # lidar to radar
     for parent_frame_id in lidar_frame_id_list:
-        temp_dict = {}
+        if parent_frame_id not in tf_info_dict.keys():
+            tf_info_dict[parent_frame_id] = {}
         for child_frame_id in radar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
-            temp_dict[child_frame_id] = tf_stamped
-        tf_info_dict[parent_frame_id] = temp_dict
+            tf_stamped = tf_buffer.lookup_transform(
+                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+            )
+            tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # camera to lidar
     for parent_frame_id in camera_frame_id_list:
-        temp_dict = {}
+        if parent_frame_id not in tf_info_dict.keys():
+            tf_info_dict[parent_frame_id] = {}
         for child_frame_id in lidar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
-            temp_dict[child_frame_id] = tf_stamped
-        tf_info_dict[parent_frame_id] = temp_dict
+            tf_stamped = tf_buffer.lookup_transform(
+                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+            )
+            tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
+
     # camera to radar
     for parent_frame_id in camera_frame_id_list:
-        temp_dict = {}
+        if parent_frame_id not in tf_info_dict.keys():
+            tf_info_dict[parent_frame_id] = {}
         for child_frame_id in radar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
-            temp_dict[child_frame_id] = tf_stamped
-        tf_info_dict[parent_frame_id] = temp_dict
+            tf_stamped = tf_buffer.lookup_transform(
+                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+            )
+            tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # radar to lidar
     for parent_frame_id in radar_frame_id_list:
-        temp_dict = {}
+        if parent_frame_id not in tf_info_dict.keys():
+            tf_info_dict[parent_frame_id] = {}
         for child_frame_id in lidar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
-            temp_dict[child_frame_id] = tf_stamped
-        tf_info_dict[parent_frame_id] = temp_dict
+            tf_stamped = tf_buffer.lookup_transform(
+                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+            )
+            tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
+
     # radar to camera
     for parent_frame_id in radar_frame_id_list:
-        temp_dict = {}
+        if parent_frame_id not in tf_info_dict.keys():
+            tf_info_dict[parent_frame_id] = {}
         for child_frame_id in camera_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(parent_frame_id, child_frame_id, rospy.Time())
-            temp_dict[child_frame_id] = tf_stamped
-        tf_info_dict[parent_frame_id] = temp_dict
+            tf_stamped = tf_buffer.lookup_transform(
+                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+            )
+            tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     return tf_info_dict
 
@@ -306,17 +325,17 @@ def get_lines_from_8_points(points):
         if i == 3:
             start_point.x = points[0, i]
             start_point.y = points[1, i]
-            start_point.z = points[2, i]
+            start_point.z = 0
             end_point.x = points[0, 0]
             end_point.y = points[1, 0]
-            end_point.z = points[2, 0]
+            end_point.z = 0
         else:
             start_point.x = points[0, i]
             start_point.y = points[1, i]
-            start_point.z = points[2, i]
+            start_point.z = 0
             end_point.x = points[0, i + 1]
             end_point.y = points[1, i + 1]
-            end_point.z = points[2, i + 1]
+            end_point.z = 0
         point_list.append(start_point)
         point_list.append(end_point)
     # 4-7 line ”下平面“
@@ -327,17 +346,17 @@ def get_lines_from_8_points(points):
         if i == 7:
             start_point.x = points[0, i]
             start_point.y = points[1, i]
-            start_point.z = points[2, i]
-            end_point.x = points[0, 0]
-            end_point.y = points[1, 0]
-            end_point.z = points[2, 0]
+            start_point.z = 0
+            end_point.x = points[0, 4]
+            end_point.y = points[1, 4]
+            end_point.z = 0
         else:
             start_point.x = points[0, i]
             start_point.y = points[1, i]
-            start_point.z = points[2, i]
+            start_point.z = 0
             end_point.x = points[0, i + 1]
             end_point.y = points[1, i + 1]
-            end_point.z = points[2, i + 1]
+            end_point.z = 0
         point_list.append(start_point)
         point_list.append(end_point)
     # 8-11 line ”侧面“
@@ -346,10 +365,10 @@ def get_lines_from_8_points(points):
         end_point = Point()
         start_point.x = points[0, i]
         start_point.y = points[1, i]
-        start_point.z = points[2, i]
+        start_point.z = 0
         end_point.x = points[0, i + 4]
         end_point.y = points[1, i + 4]
-        end_point.z = points[2, i + 4]
+        end_point.z = 0
         point_list.append(start_point)
         point_list.append(end_point)
     return point_list
