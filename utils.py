@@ -279,16 +279,19 @@ def calculate_transform_from_lidar_to_pixle(tf_stamped, camera_info):
     return transform_matrix
 
 
-def calculate_3d_bbox_corners(h, w, l, x, y, z, yaw):
+def calculate_3d_bbox_corners(x, y, z, l, w, h, yaw):
     """将3d的bbox转换成8个corner 3d坐标 (右手坐标系,x朝前,y朝左,z朝上)
 
     Args:
-        h (_type_): 3d bbox height (z-axis)
-        w (_type_): 3d bbox width (y-axis)
-        l (_type_): 3d bbox length (x-axis)
         x (_type_): x position
         y (_type_): y position
         z (_type_): z position
+        l (_type_): 3d bbox length (x-axis)
+        w (_type_): 3d bbox width (y-axis)
+        h (_type_): 3d bbox height (z-axis)
+
+
+
         yaw (_type_): rotation angle around the z-axis
     """
 

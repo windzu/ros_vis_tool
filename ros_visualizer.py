@@ -341,15 +341,13 @@ class ROSVisualizer:
         if detected_object_array is None or not isinstance(detected_object_array, DetectedObjectArray):
             return None
 
-        marker_array = MarkerArray()
-        id = 0
-        for object in detected_object_array.objects:
+        def create_cube_marker(object, id):
             bbox3d_marker = Marker()
             bbox3d_marker.header = object.header
             bbox3d_marker.header.stamp = rospy.Time.now()
             bbox3d_marker.type = Marker.CUBE
             bbox3d_marker.action = Marker.ADD
-            bbox3d_marker.ns = "autoware_detected_object"
+            bbox3d_marker.ns = "CUBE"
             bbox3d_marker.id = id
 
             bbox3d_marker.pose = object.pose
@@ -357,10 +355,36 @@ class ROSVisualizer:
             bbox3d_marker.color = ROSVisualizer.bbox_color_map(
                 bbox_type="detected", bbox_class=object.label
             )  # need to change
-
             bbox3d_marker.lifetime = rospy.Duration(0.1)
-            marker_array.markers.append(bbox3d_marker)
+            return bbox3d_marker
 
+        def create_arrow_marker(object, id):
+            bbox3d_marker = Marker()
+            bbox3d_marker.header = object.header
+            bbox3d_marker.header.stamp = rospy.Time.now()
+            bbox3d_marker.type = Marker.ARROW
+            bbox3d_marker.action = Marker.ADD
+            bbox3d_marker.ns = "ARROW"
+            bbox3d_marker.id = id
+
+            bbox3d_marker.pose = object.pose
+            bbox3d_marker.scale.x = object.dimensions.x
+            bbox3d_marker.scale.y = 1
+            bbox3d_marker.scale.z = 1
+            bbox3d_marker.color = color_dict["red"]
+            bbox3d_marker.lifetime = rospy.Duration(0.1)
+            return bbox3d_marker
+
+        marker_array = MarkerArray()
+        id = 0
+        for object in detected_object_array.objects:
+            # cube marker
+            cube_marker = create_cube_marker(object, id)
+            marker_array.markers.append(cube_marker)
+            id += 1
+            # arrow marker
+            arrow_marker = create_arrow_marker(object, id)
+            marker_array.markers.append(arrow_marker)
             id += 1
         return marker_array
 
@@ -390,7 +414,7 @@ class ROSVisualizer:
         image_marker_array = ImageMarkerArray()
         image_marker = ImageMarker()
         image_marker.id = 0
-        image_marker.ns = "annotations"  #  autoware_detected_object
+        image_marker.ns = "autoware_detected_object"  #  autoware_detected_object
         image_marker.header = detected_object_array.objects[0].header
         image_marker.header.stamp = rospy.Time.now()
         image_marker.type = ImageMarker.LINE_LIST
@@ -407,12 +431,12 @@ class ROSVisualizer:
 
         for object in detected_object_array.objects:
             # get h, w, l, x, y, z, yaw, trans by parsing object
-            h = object.dimensions.z
-            w = object.dimensions.x  # y
-            l = object.dimensions.y  # x
             x = object.pose.position.x
             y = object.pose.position.y
             z = object.pose.position.z
+            l = object.dimensions.x
+            w = object.dimensions.y
+            h = object.dimensions.z
 
             # get yaw
             r = R.from_quat(
@@ -426,15 +450,18 @@ class ROSVisualizer:
             yaw = r.as_euler("XYZ")[2]
 
             # debug
-            print("x, y, z : ", x, y, z)
-            print("h, w, l : ", h, w, l)
-            print("yaw : ", yaw)
-            # debug
-            # yaw equal yaw - pi/2
+            yaw = -yaw  # 反方向
 
-            yaw = math.pi / 2 - yaw  # 0
+            #             # debug
+            #             print("x, y, z : ", x, y, z)
+            #             print("l, w, h : ", l, w, h)
+            #             print("yaw : ", yaw)
+            #             # debug
+            #             # yaw equal yaw - pi/2
+            #
+            #             # yaw = math.pi / 2 - yaw  # 0
 
-            corners_3d = calculate_3d_bbox_corners(h, w, l, x, y, z, yaw)
+            corners_3d = calculate_3d_bbox_corners(x, y, z, l, w, h, yaw)
             # expand 3x8 to 4x8 with 1s in the 4th column
             corners_3d = np.concatenate((corners_3d, np.ones((1, 8))), axis=0)
 
