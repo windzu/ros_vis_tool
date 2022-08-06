@@ -307,6 +307,7 @@ class ROSVisualizer:
             marker_array_from_detected_objects = ROSVisualizer.autoware_detected_object_array_to_marker_array(
                 detected_object_array
             )
+
             self.marker_array_from_detected_objects_publisher_dict[lidar_frame_id].publish(
                 marker_array_from_detected_objects
             )

@@ -172,9 +172,13 @@ def store_all_tf_info(frame_id_info_dict):
             tf_info_dict[parent_frame_id] = {}
 
         for child_frame_id in camera_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(
-                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
-            )
+            try:
+                tf_stamped = tf_buffer.lookup_transform(
+                    parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                tf_stamped = None
+
             tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # lidar to radar
@@ -182,9 +186,13 @@ def store_all_tf_info(frame_id_info_dict):
         if parent_frame_id not in tf_info_dict.keys():
             tf_info_dict[parent_frame_id] = {}
         for child_frame_id in radar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(
-                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
-            )
+            try:
+                tf_stamped = tf_buffer.lookup_transform(
+                    parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                tf_stamped = None
+
             tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # camera to lidar
@@ -192,9 +200,13 @@ def store_all_tf_info(frame_id_info_dict):
         if parent_frame_id not in tf_info_dict.keys():
             tf_info_dict[parent_frame_id] = {}
         for child_frame_id in lidar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(
-                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
-            )
+            try:
+                tf_stamped = tf_buffer.lookup_transform(
+                    parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                tf_stamped = None
+
             tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # camera to radar
@@ -202,9 +214,13 @@ def store_all_tf_info(frame_id_info_dict):
         if parent_frame_id not in tf_info_dict.keys():
             tf_info_dict[parent_frame_id] = {}
         for child_frame_id in radar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(
-                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
-            )
+            try:
+                tf_stamped = tf_buffer.lookup_transform(
+                    parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                tf_stamped = None
+
             tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # radar to lidar
@@ -212,9 +228,13 @@ def store_all_tf_info(frame_id_info_dict):
         if parent_frame_id not in tf_info_dict.keys():
             tf_info_dict[parent_frame_id] = {}
         for child_frame_id in lidar_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(
-                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
-            )
+            try:
+                tf_stamped = tf_buffer.lookup_transform(
+                    parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                tf_stamped = None
+
             tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     # radar to camera
@@ -222,9 +242,13 @@ def store_all_tf_info(frame_id_info_dict):
         if parent_frame_id not in tf_info_dict.keys():
             tf_info_dict[parent_frame_id] = {}
         for child_frame_id in camera_frame_id_list:
-            tf_stamped = tf_buffer.lookup_transform(
-                parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
-            )
+            try:
+                tf_stamped = tf_buffer.lookup_transform(
+                    parent_frame_id, child_frame_id, rospy.Time.now(), rospy.Duration(1.0)
+                )
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                tf_stamped = None
+
             tf_info_dict[parent_frame_id][child_frame_id] = tf_stamped
 
     return tf_info_dict
@@ -238,12 +262,12 @@ def store_all_camera_info(camera_frame_id_list, camera_info_topic_suffix):
         camera_info_topic = camera_frame_id + camera_info_topic_suffix
         try:
             camera_info_msg = rospy.wait_for_message(camera_info_topic, CameraInfo, timeout=3.0)
-            camera_info_dict[camera_frame_id] = camera_info_msg
         except rospy.ROSException:
             rospy.logwarn(
                 "[ store_all_camera_info ] : timeout when waiting for camera_info_topic: {}".format(camera_info_topic)
             )
-            continue
+            camera_info_msg = None
+        camera_info_dict[camera_frame_id] = camera_info_msg
     return camera_info_dict
 
 
@@ -257,6 +281,9 @@ def calculate_transform_from_lidar_to_pixle(tf_stamped, camera_info):
         transform (np.array(3*4)): transform from lidar to pixel matrix
     """
     transform_matrix = np.eye(4)
+    if tf_stamped is None or camera_info is None:
+        return transform_matrix
+
     # convert tf_stamped to matrix
     r = R.from_quat(
         (

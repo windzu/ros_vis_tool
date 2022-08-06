@@ -3,5 +3,6 @@ camera_frame_id_list:
   - CAM_FRONT_RIGHT
 lidar_frame_id_list:
   - LIDAR_TOP
+  - RSLIDAR_TOP
 radar_frame_id_list:
   
