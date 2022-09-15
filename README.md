@@ -1,3 +1,6 @@
+# WARNING
+本仓库不再维护，相关的功能移植至[wadda](https://github.com/windzu/wadda)项目中，详情可查看如何在wadda中使用ros的可视化功能
+
 # 用于ros调试时候的可视化工具
 
 # 功能
